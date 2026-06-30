@@ -1,5 +1,6 @@
 let sliderInstance = null;
 
+let damsoIntroPlayed = false;
 function initProjectSlider() {
 
   if (typeof gsap === "undefined") {
@@ -89,6 +90,53 @@ function initProjectSlider() {
   }
 
   let layout = getLayoutConfig();
+
+  // ── EXACT sandbox (damso) coverflow engine + one-time entrance ──────
+  const DAMSO = {
+    N_REF: 1440, B: 397, W: 335, X: 100, G: 124, // geometry from the sandbox
+    ASPECT: "4 / 5",   // portrait slides (sandbox)
+    WHITE_FRAME: 0,    // px white border (0 = off) -> white-between on overlap
+    VISIBLE: 2,        // |rel| <= VISIBLE shown (5 on screen)
+    INTRO_ON: true,
+    SWEEP_START: 12, SWEEP_DUR: 3, SWEEP_DELAY: -0.4,
+    SPREAD_DUR: 2.5, SPREAD_DELAY: -0.3,
+    ZOOM_START: 1.8, ZOOM_DUR: 2.8,
+    BUILD_DUR: 1.7, BUILD_POS: 1,
+    EASE: "expo.inOut"
+  };
+  // force each slide to the sandbox size/shape (portrait + white frame)
+  function damsoSize(item) {
+    item.style.width = (DAMSO.X / DAMSO.N_REF * 100).toFixed(3) + "vw";
+    item.style.aspectRatio = DAMSO.ASPECT;
+    item.style.height = "auto";
+    item.style.boxSizing = "border-box";
+    item.style.transformOrigin = "50% 50%"; // grow from centre (symmetric)
+    if (DAMSO.WHITE_FRAME > 0) {
+      item.style.background = "#fff";
+      item.style.border = DAMSO.WHITE_FRAME + "px solid #fff";
+    }
+    const img = item.querySelector("img");
+    if (img) { img.style.width = "100%"; img.style.height = "100%"; img.style.objectFit = "cover"; img.style.display = "block"; }
+  }
+  // slides are anchored at the list's top-left -> centre them in the list box
+  function damsoOffset() {
+    const boxW = window.innerWidth * DAMSO.X / DAMSO.N_REF;
+    return { x: (list.offsetWidth - boxW) / 2, y: (list.offsetHeight - boxW * 1.25) / 2 };
+  }
+  // resting coverflow position/scale for an integer slot (damso geometry)
+  function damsoRest(rel) {
+    const r = window.innerWidth / DAMSO.N_REF, off = damsoOffset();
+    const a = Math.abs(rel), s = rel < 0 ? -1 : rel > 0 ? 1 : 0;
+    const nsp = DAMSO.W * r, lsp = DAMSO.B * r;
+    const dx = a > 1 ? rel * nsp + (lsp - nsp) * s : rel * lsp;
+    return {
+      x: dx + off.x,
+      y: off.y,
+      scale: a < 1 ? (DAMSO.X + DAMSO.G) / 100 : 1,
+      opacity: a > DAMSO.VISIBLE + 0.4 ? 0 : 1,
+      zIndex: rel === 0 ? 100 : Math.max(1, Math.round(20 - a))
+    };
+  }
 
   // ── DOM-Hilfsfunktionen ────────────────────────────────────
   function ensureControllerIcon() {
@@ -420,15 +468,9 @@ function initProjectSlider() {
     if (detailHidden) {
       setSlideDetailState(item, relativeIndex);
     } else {
-      gsap.set(item, {
-        x: relativeIndex * layout.slideWidth,
-        y: 0,
-        scale: relativeIndex === 0 ? 1.25 : 0.75,
-        zIndex: relativeIndex === 0 ? 100 : 1,
-        opacity: Math.abs(relativeIndex) > 2 ? 0 : 1,
-        visibility: "visible",
-        filter: "blur(0px)"
-      });
+      damsoSize(item);
+      const t = damsoRest(relativeIndex);
+      gsap.set(item, { x: t.x, y: t.y, scale: t.scale, zIndex: t.zIndex, opacity: t.opacity, visibility: "visible", filter: "blur(0px)" });
     }
 
     list.appendChild(item);
@@ -453,21 +495,50 @@ function initProjectSlider() {
 
   function updateSliderPosition() {
     slideItems.forEach((item) => {
-      const active = item.relativeIndex === 0;
+      damsoSize(item.element);
+      const t = damsoRest(item.relativeIndex);
       gsap.killTweensOf(item.element);
       gsap.to(item.element, {
-        x: item.relativeIndex * layout.slideWidth,
-        y: 0,
-        scale: active ? 1.25 : 0.75,
-        zIndex: active ? 100 : 1,
-        opacity: Math.abs(item.relativeIndex) > 2 ? 0 : 1,
-        visibility: "visible",
-        filter: "blur(0px)",
-        duration: layout.isMobile ? 0.62 : 0.75,
-        ease: "power3.out",
-        overwrite: true
+        x: t.x, y: t.y, scale: t.scale, zIndex: t.zIndex, opacity: t.opacity,
+        visibility: "visible", filter: "blur(0px)",
+        duration: layout.isMobile ? 0.62 : 0.75, ease: "power3.out", overwrite: true
       });
     });
+  }
+
+  // ── EXACT sandbox entrance: cluster (zoomed slivers) -> spread + R->L
+  //    sweep (marquee) + zoom-out + centre grow -> settle into the coverflow.
+  function playDamsoIntro() {
+    const n = cmsItems.length;
+    slideItems.forEach((it) => { gsap.killTweensOf(it.element); damsoSize(it.element); });
+    const S = { spread: 0, build: 0, sweep: DAMSO.SWEEP_START, zoom: DAMSO.ZOOM_START };
+    function render() {
+      const r = window.innerWidth / DAMSO.N_REF, off = damsoOffset();
+      const nsp = DAMSO.W * r * S.spread, lsp = DAMSO.B * r * S.spread;
+      slideItems.forEach(({ element, relativeIndex }) => {
+        let i = relativeIndex + S.sweep;
+        i = i - n * Math.round(i / n); // wrap -> seamless marquee
+        const a = Math.abs(i), s = i < 0 ? -1 : i > 0 ? 1 : 0;
+        if (a > DAMSO.VISIBLE + 0.5) { gsap.set(element, { opacity: 0, visibility: "hidden" }); return; }
+        const o = a > 1 ? i * nsp + (lsp - nsp) * s : i * lsp;
+        const bump = a < 1 ? 1 - a : 0; // only the centred slot swells
+        const scale = ((DAMSO.X + bump * DAMSO.G * S.build) / 100) * S.zoom;
+        gsap.set(element, { x: o + off.x, y: off.y, scale: scale, opacity: 1, visibility: "visible", zIndex: a < 1 ? 100 : Math.max(1, Math.round(20 - a)), filter: "blur(0px)" });
+      });
+    }
+    // settle instantly (no tween) so duplicate slides don't flash/animate at the end
+    function settleRest() {
+      slideItems.forEach((item) => {
+        const t = damsoRest(item.relativeIndex);
+        gsap.set(item.element, { x: t.x, y: t.y, scale: t.scale, zIndex: t.zIndex, opacity: t.opacity, visibility: t.opacity > 0 ? "visible" : "hidden", filter: "blur(0px)" });
+      });
+    }
+    render();
+    gsap.timeline({ onUpdate: render, onComplete: settleRest })
+      .to(S, { spread: 1, duration: DAMSO.SPREAD_DUR, delay: DAMSO.SPREAD_DELAY, ease: DAMSO.EASE }, 0)
+      .to(S, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY, ease: DAMSO.EASE }, 0)
+      .to(S, { zoom: 1, duration: DAMSO.ZOOM_DUR, ease: DAMSO.EASE }, 0)
+      .to(S, { build: 1, duration: DAMSO.BUILD_DUR, ease: DAMSO.EASE }, DAMSO.BUILD_POS);
   }
 
   function shiftClosedSlider(direction) {
@@ -663,7 +734,7 @@ function initProjectSlider() {
       timeline.to(item.element, {
         x: item.relativeIndex * layout.slideWidth,
         y: 0,
-        scale: active ? 1.25 : 0.75,
+        scale: active ? (DAMSO.X + DAMSO.G) / 100 : 1,
         zIndex: active ? 100 : 1,
         opacity: Math.abs(item.relativeIndex) > 2 ? 0 : 1,
         visibility: "visible",
@@ -783,13 +854,13 @@ function initProjectSlider() {
   centerBtn.addEventListener("click", toggleDetailMode);
   window.addEventListener("resize", onResize);
 
-  
- gsap.to([list, controller], {
-  autoAlpha: 1,
-  duration: 0.5,
-  ease: "power2.out",
-  delay: 0.1
-});
+    if (DAMSO.INTRO_ON && !damsoIntroPlayed && !mobileQuery.matches) {
+    damsoIntroPlayed = true;
+    gsap.set([list, controller], { autoAlpha: 1 });
+    playDamsoIntro();
+  } else {
+    gsap.to([list, controller], { autoAlpha: 1, duration: 0.5, ease: "power2.out", delay: 0.1 });
+  }
 
   // ── Cleanup für Barba ──────────────────────────────────────
   function destroy() {
