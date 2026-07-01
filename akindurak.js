@@ -60,6 +60,7 @@ function initProjectSlider() {
   let resizeTimer = null;
   let introTl = null;         // handle to the one-time Damso intro timeline
   let isIntroPlaying = false;  // true only while that intro is running
+  let wheelShown = false;      // wheel/controller revealed for this intro yet?
 
   function getLayoutConfig() {
     if (mobileQuery.matches) {
@@ -643,11 +644,17 @@ function initProjectSlider() {
     // exact sandbox intro: five simultaneous expo.inOut tweens (~3s total).
     // Keep the handle + a lock so interaction/resize/destroy can stop it.
     isIntroPlaying = true;
+    wheelShown = false;
     introTl = gsap.timeline({ defaults: { ease: DAMSO.EASE }, onUpdate: render, onComplete: settleAfterIntro })
       .fromTo(S, { build: 0 }, { build: 1, duration: DAMSO.BUILD_DUR }, DAMSO.BUILD_POS)
       .fromTo(S, { sweep: DAMSO.SWEEP_START }, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY }, 0)
       .fromTo(S, { spread: 0 }, { spread: 1, duration: DAMSO.SPREAD_DUR, delay: DAMSO.SPREAD_DELAY }, 0)
-      .fromTo(S, { zoom: DAMSO.ZOOM_START }, { zoom: 1, duration: DAMSO.ZOOM_DUR }, 0);
+      .fromTo(S, { zoom: DAMSO.ZOOM_START }, { zoom: 1, duration: DAMSO.ZOOM_DUR }, 0)
+      // Slide the wheel up ~0.8s before the timeline mathematically ends, so it
+      // starts as the centre image is on its final, gentle settle (expo.inOut
+      // tails off early, so the remaining motion is barely perceptible). Tune
+      // this offset to shift the wheel entrance earlier/later.
+      .add(revealWheelUp, "-=0.8");
     // No wrapper "rise" tween: animating the list's yPercent in GSAP overwrites
     // its CSS translate(-50%,-50%) Y-centring and drops the whole coverflow
     // ~50% of the list height off-centre. The rise is a minor flourish; skipping
@@ -670,6 +677,10 @@ function initProjectSlider() {
         visibility: t.opacity > 0 ? "visible" : "hidden", filter: "blur(0px)"
       });
     });
+    // Fallback: the wheel normally slides up from inside the intro timeline (as
+    // the centre image settles). If the intro was cut short before that point,
+    // bring it up now. Guarded, so it never double-triggers.
+    revealWheelUp();
   }
 
   // hard-stop the running intro (kills its timeline + the S-proxy tweens +
@@ -686,6 +697,21 @@ function initProjectSlider() {
     if (!isIntroPlaying && !introTl) return;
     stopIntro();
     settleAfterIntro();
+  }
+
+  // wheel/controller slides up from below the screen. Guarded so it fires exactly
+  // once per intro — triggered from INSIDE the timeline as the centre image
+  // finishes scaling, with settleAfterIntro() as a fallback if the intro is cut
+  // short before that point.
+  function revealWheelUp() {
+    if (wheelShown) return;
+    wheelShown = true;
+    const cRect = controller.getBoundingClientRect();
+    gsap.fromTo(
+      controller,
+      { autoAlpha: 0, y: window.innerHeight - cRect.top + 20 }, // start just below the viewport
+      { autoAlpha: 1, y: 0, duration: 0.8, ease: "power3.out" }
+    );
   }
 
   function shiftClosedSlider(direction) {
@@ -951,7 +977,7 @@ function initProjectSlider() {
   // ── Responsive Refresh ─────────────────────────────────────
   function refreshResponsiveLayout() {
     if (isMorphing || isCardSwitching) return;
-    if (isIntroPlaying) stopIntro(); // resize mid-intro: cut it, settle below
+    if (isIntroPlaying) { stopIntro(); gsap.set(controller, { autoAlpha: 1, y: 0 }); wheelShown = true; } // resize cut the intro: settle + show wheel
     const wasOpen = isOpen;
     layout = getLayoutConfig();
     DAMSO = getDamsoConfig(); // re-tune coverflow geometry across the 992 split
@@ -1021,7 +1047,9 @@ function initProjectSlider() {
   // full cluster -> spread -> settle visible, exactly like the index.html sandbox.
   function startIntroAfterPreloader() {
     function go() {
-      gsap.set([list, controller], { autoAlpha: 1 });
+      // reveal only the coverflow; the wheel/controller stays hidden and fades
+      // in after the intro completes (settleAfterIntro) — matches damso.com.
+      gsap.set(list, { autoAlpha: 1 });
       playDamsoIntro();
     }
     if (!document.querySelector(".preloader")) { go(); return; } // no preloader this load
@@ -1863,6 +1891,90 @@ function injectMenuFixCSS() {
   document.head.appendChild(styleFix);
 }
 
+function runPreloaderOncePerTab() {
+  const FLAG = "preloader_shown_v1";
+  if (sessionStorage.getItem(FLAG)) return;
+
+  sessionStorage.setItem(FLAG, "1");
+
+  const pre = document.createElement("div");
+  pre.className = "preloader";
+  pre.innerHTML = `<div class="preloader-percent">0%</div>`;
+  document.body.appendChild(pre);
+
+  const style = document.createElement("style");
+  style.textContent = `
+.preloader {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  z-index: 99999;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 3rem;
+  pointer-events: none;
+}
+
+.preloader-percent {
+  font-family: "Urbanist", system-ui, -apple-system, sans-serif;
+  font-size: 42px;
+  font-weight: 500;
+  color: #000;
+  letter-spacing: 0.02em;
+}
+`;
+
+  document.head.appendChild(style);
+
+  const percent = pre.querySelector(".preloader-percent");
+  const current = { value: 0 };
+
+  const delayElement = document.querySelector("#delay-skew");
+  if (delayElement) delayElement.style.opacity = 0;
+
+  gsap.to(current, {
+    value: 100,
+    duration: 1,
+    onUpdate: () =>
+      (percent.textContent = `${Math.round(current.value)}%`),
+    onComplete: () => {
+      gsap.to(pre, {
+        opacity: 0,
+        duration: 0.6,
+        ease: "power2.inOut",
+        onComplete: () => pre.remove(),
+      });
+    },
+  });
+
+  if (delayElement) {
+    const text = new SplitType(delayElement, {
+      types: "lines, words",
+      lineClass: "word-line",
+    });
+
+    const word = delayElement.querySelectorAll(".word-line .word");
+
+    gsap.fromTo(
+      word,
+      { y: "100%", skewX: "-6", opacity: 0 },
+      {
+        y: "0%",
+        skewX: "0",
+        opacity: 1,
+        duration: 2,
+        stagger: 0.03,
+        ease: "expo.out",
+      }
+    );
+  }
+
+  initSkewUp();
+}
+
+document.addEventListener("DOMContentLoaded", runPreloaderOncePerTab);
+
 function applyHamburgerVisibilityFix() {
   const burger = document.querySelector(".hamburger-wrapper");
   const menuOuter =
@@ -2328,6 +2440,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   initLenis();
   initBurgerMenu();
+  runPreloaderOncePerTab();
 
   injectGlobalPlayer();
   initGlobalTrack();
