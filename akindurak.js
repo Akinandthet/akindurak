@@ -58,6 +58,8 @@ function initProjectSlider() {
   let isCardSwitching = false;
   let queuedCardDirection = 0;
   let resizeTimer = null;
+  let introTl = null;         // handle to the one-time Damso intro timeline
+  let isIntroPlaying = false;  // true only while that intro is running
 
   function getLayoutConfig() {
     if (mobileQuery.matches) {
@@ -92,18 +94,39 @@ function initProjectSlider() {
   let layout = getLayoutConfig();
 
   // ── EXACT sandbox (damso) coverflow engine + one-time entrance ──────
-  const DAMSO = {
-    N_REF: 1440, B: 397, W: 335, X: 100, G: 124, // geometry from the sandbox
-    ASPECT: "4 / 5",   // portrait slides (sandbox)
-    WHITE_FRAME: 0,    // px white border (0 = off) -> white-between on overlap
-    VISIBLE: 2,        // |rel| <= VISIBLE shown (5 on screen)
-    INTRO_ON: true,
-    SWEEP_START: 12, SWEEP_DUR: 3, SWEEP_DELAY: -0.4,
-    SPREAD_DUR: 2.5, SPREAD_DELAY: -0.3,
-    ZOOM_START: 1.8, ZOOM_DUR: 2.8,
-    BUILD_DUR: 1.7, BUILD_POS: 1,
-    EASE: "expo.inOut"
-  };
+  // Geometry + intro timeline ported VERBATIM from the index.html sandbox,
+  // INCLUDING the sandbox's desktop/mobile split (switch at <992 = damso's
+  // mockupWidth breakpoint). damsoSize/Offset/Rest + the intro all read the
+  // CURRENT `DAMSO`, so a resize across 992 re-tunes the whole coverflow.
+  function getDamsoConfig() {
+    const cfg = {
+      // shared look + intro timeline (identical desktop/mobile)
+      X: 100,            // base box (the w-100 box) -> scale 1
+      FOCUS: 0,          // index of the image that ends centred (sandbox = 0)
+      ASPECT: "4 / 5",   // portrait slides (sandbox)
+      WHITE_FRAME: 6,    // px white border (sandbox = 6) -> white gaps between overlapping slivers
+      RADIUS: 2,         // px corner radius (sandbox --radius)
+      MAX_COVERS: 6,     // ONLY this many covers show at once (sandbox)
+      INTRO_ON: true,
+      EASE: "expo.inOut",
+      SWEEP_START: 12, SWEEP_DUR: 3, SWEEP_DELAY: -0.4,
+      SPREAD_DUR: 2.5, SPREAD_DELAY: -0.3,
+      ZOOM_START: 1.8, ZOOM_DUR: 2.8,
+      BUILD_DUR: 1.7, BUILD_POS: 1,
+      RISE_PCT: 10, RISE_DUR: 3, RISE_POS: 0.2,
+      // desktop geometry (design px @ a 1440 mockup)
+      N_REF: 1440, B: 397, W: 335, G: 124,
+      J_VIS: 4,          // cull window: a slot with |i| >= J_VIS is never drawn
+      VISIBLE: 2         // resting: |rel| <= VISIBLE shown (5 on screen)
+    };
+    if (window.innerWidth < 992) {
+      // sandbox mobile branch (mockupWidth ~390, bigger centre, fewer covers)
+      cfg.N_REF = 390; cfg.B = 221; cfg.W = 110; cfg.G = 160;
+      cfg.J_VIS = 2; cfg.VISIBLE = 1;
+    }
+    return cfg;
+  }
+  let DAMSO = getDamsoConfig();
   // force each slide to the sandbox size/shape (portrait + white frame)
   function damsoSize(item) {
     item.style.width = (DAMSO.X / DAMSO.N_REF * 100).toFixed(3) + "vw";
@@ -111,9 +134,14 @@ function initProjectSlider() {
     item.style.height = "auto";
     item.style.boxSizing = "border-box";
     item.style.transformOrigin = "50% 50%"; // grow from centre (symmetric)
+    item.style.borderRadius = (DAMSO.RADIUS || 0) + "px"; // sandbox --radius
     if (DAMSO.WHITE_FRAME > 0) {
+      // white box + white frame -> overlapping slivers show WHITE between them
+      // (the damso "half-cut" look), exactly like the index.html sandbox.
       item.style.background = "#fff";
       item.style.border = DAMSO.WHITE_FRAME + "px solid #fff";
+    } else {
+      item.style.border = "0";
     }
     const img = item.querySelector("img");
     if (img) { img.style.width = "100%"; img.style.height = "100%"; img.style.objectFit = "cover"; img.style.display = "block"; }
@@ -506,39 +534,134 @@ function initProjectSlider() {
     });
   }
 
-  // ── EXACT sandbox entrance: cluster (zoomed slivers) -> spread + R->L
-  //    sweep (marquee) + zoom-out + centre grow -> settle into the coverflow.
+  // ── EXACT sandbox entrance (index.html): cluster (zoomed slivers) -> spread
+  //    + R->L marquee sweep + zoom-out + centre grow -> settle into the
+  //    coverflow. Ported VERBATIM from the sandbox play()/render(): the SAME
+  //    five expo.inOut proxy tweens drive the SAME layout fn (`ea`). We run it
+  //    on the n unique-image slides (the core buffer window); the sandbox's
+  //    rolling posId lands each slide on slot == its relativeIndex, so the
+  //    final frame equals damsoRest() exactly -> no pop into the live slider.
   function playDamsoIntro() {
     const n = cmsItems.length;
-    slideItems.forEach((it) => { gsap.killTweensOf(it.element); damsoSize(it.element); });
-    const S = { spread: 0, build: 0, sweep: DAMSO.SWEEP_START, zoom: DAMSO.ZOOM_START };
+    const r = window.innerWidth / DAMSO.N_REF; // sandbox: innerWidth / mockupWidth
+    const off = damsoOffset();
+
+    // stop any in-flight positioning tweens before we take control
+    slideItems.forEach((it) => gsap.killTweensOf(it.element));
+
+    // the n core slides, indexed like the sandbox items (0..n-1 = image order).
+    // core window = relativeIndex in [lo, lo+n-1]; everything else is a buffer
+    // duplicate that stays parked off-stage during the intro.
+    const lo = -Math.floor(n / 2);
+    const items = new Array(n);
+    slideItems.forEach(({ element, relativeIndex }) => {
+      if (relativeIndex < lo || relativeIndex >= lo + n) {
+        gsap.set(element, { opacity: 0, visibility: "hidden" });
+        return;
+      }
+      const k = ((relativeIndex % n) + n) % n; // slide's image index == sandbox item id
+      items[k] = element;
+      damsoSize(element);
+    });
+    if (items.some((el) => !el)) { settleAfterIntro(); return; } // safety: buffer too small
+
+    const posId = items.map((_el, i) => i); // per-item rolling slot id (damso posId)
+    const S = {
+      p: DAMSO.FOCUS,          // focus position (fixed during the intro)
+      spread: 0,               // v  : 0 stacked -> 1 full coverflow spacing
+      build: 0,                // y  : 0 -> 1, the focus image grows in
+      sweep: DAMSO.SWEEP_START,// Y  : 12 -> 0, right->left slot sweep
+      zoom: DAMSO.ZOOM_START   // et : 1.8 -> 1, global zoom-out
+    };
+
+    // render() === the sandbox layout fn `ea`
     function render() {
-      const r = window.innerWidth / DAMSO.N_REF, off = damsoOffset();
-      const nsp = DAMSO.W * r * S.spread, lsp = DAMSO.B * r * S.spread;
-      slideItems.forEach(({ element, relativeIndex }) => {
-        let i = relativeIndex + S.sweep;
-        i = i - n * Math.round(i / n); // wrap -> seamless marquee
-        const a = Math.abs(i), s = i < 0 ? -1 : i > 0 ? 1 : 0;
-        if (a > DAMSO.VISIBLE + 0.5) { gsap.set(element, { opacity: 0, visibility: "hidden" }); return; }
-        const o = a > 1 ? i * nsp + (lsp - nsp) * s : i * lsp;
-        const bump = a < 1 ? 1 - a : 0; // only the centred slot swells
-        const scale = ((DAMSO.X + bump * DAMSO.G * S.build) / 100) * S.zoom;
-        gsap.set(element, { x: o + off.x, y: off.y, scale: scale, opacity: 1, visibility: "visible", zIndex: a < 1 ? 100 : Math.max(1, Math.round(20 - a)), filter: "blur(0px)" });
-      });
+      const nsp = DAMSO.W * r * S.spread; // spacing increment, scaled
+      const lsp = DAMSO.B * r * S.spread; // 1st-neighbour offset, scaled
+
+      // pass 1: roll every item into its [-n/2, n/2] slot (clustered at centre
+      // while spread~0 -> the half-cut sliver start)
+      const slot = new Array(n);
+      for (let k = 0; k < n; k++) {
+        let i = posId[k] - S.p + S.sweep;
+        while (i > n / 2) { posId[k] -= n; i -= n; }
+        while (i < -n / 2) { posId[k] += n; i += n; }
+        slot[k] = i;
+      }
+
+      // only the MAX_COVERS closest to centre may show; the rest wait off-stage
+      const order = [];
+      for (let k = 0; k < n; k++) order.push(k);
+      order.sort((p, q) => Math.abs(slot[p]) - Math.abs(slot[q]));
+      const show = {};
+      for (let m = 0; m < Math.min(DAMSO.MAX_COVERS, n); m++) show[order[m]] = true;
+
+      // pass 2: lay out every shown item
+      for (let k = 0; k < n; k++) {
+        const i = slot[k];
+        const a = i === 0 ? 0 : i < 0 ? -1 : 1;
+        const o = Math.abs(i) > 1 ? i * nsp + (lsp - nsp) * a : i * lsp;
+        // only the focused slot swells; everyone else == zoom
+        const sc = Math.abs(i) < 1
+          ? ((DAMSO.X + (1 - Math.abs(i)) * DAMSO.G * S.build) / 100) * S.zoom
+          : S.zoom;
+        if (show[k] && Math.abs(i) < DAMSO.J_VIS) {
+          gsap.set(items[k], {
+            x: off.x + o, y: off.y, scale: sc,
+            visibility: "visible", opacity: 1, filter: "blur(0px)",
+            zIndex: Math.floor(7 + i), force3D: true
+          });
+        } else {
+          gsap.set(items[k], { visibility: "hidden", opacity: 0 });
+        }
+      }
     }
-    // settle instantly (no tween) so duplicate slides don't flash/animate at the end
-    function settleRest() {
-      slideItems.forEach((item) => {
-        const t = damsoRest(item.relativeIndex);
-        gsap.set(item.element, { x: t.x, y: t.y, scale: t.scale, zIndex: t.zIndex, opacity: t.opacity, visibility: t.opacity > 0 ? "visible" : "hidden", filter: "blur(0px)" });
+
+    render(); // initial state: stacked at centre, zoomed, swept off, focus flat
+
+    // exact sandbox intro: five simultaneous expo.inOut tweens (~3s total).
+    // Keep the handle + a lock so interaction/resize/destroy can stop it.
+    isIntroPlaying = true;
+    introTl = gsap.timeline({ defaults: { ease: DAMSO.EASE }, onUpdate: render, onComplete: settleAfterIntro })
+      .fromTo(S, { build: 0 }, { build: 1, duration: DAMSO.BUILD_DUR }, DAMSO.BUILD_POS)
+      .fromTo(S, { sweep: DAMSO.SWEEP_START }, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY }, 0)
+      .fromTo(S, { spread: 0 }, { spread: 1, duration: DAMSO.SPREAD_DUR, delay: DAMSO.SPREAD_DELAY }, 0)
+      .fromTo(S, { zoom: DAMSO.ZOOM_START }, { zoom: 1, duration: DAMSO.ZOOM_DUR }, 0)
+      .fromTo(list, { yPercent: DAMSO.RISE_PCT }, { yPercent: 0, duration: DAMSO.RISE_DUR }, DAMSO.RISE_POS);
+  }
+
+  // settle EVERY slide instantly onto its resting coverflow slot. The core
+  // slides already ended AT damsoRest (the rolling posId guarantees slot ==
+  // relativeIndex), and any still-"shown" 3rd cover sits off-screen, so this
+  // set is a no-op visually while clearing the wrapper rise + parking dupes.
+  function settleAfterIntro() {
+    isIntroPlaying = false;
+    introTl = null;
+    gsap.set(list, { yPercent: 0 });
+    slideItems.forEach((item) => {
+      damsoSize(item.element);
+      const t = damsoRest(item.relativeIndex);
+      gsap.set(item.element, {
+        x: t.x, y: t.y, scale: t.scale, zIndex: t.zIndex, opacity: t.opacity,
+        visibility: t.opacity > 0 ? "visible" : "hidden", filter: "blur(0px)"
       });
-    }
-    render();
-    gsap.timeline({ onUpdate: render, onComplete: settleRest })
-      .to(S, { spread: 1, duration: DAMSO.SPREAD_DUR, delay: DAMSO.SPREAD_DELAY, ease: DAMSO.EASE }, 0)
-      .to(S, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY, ease: DAMSO.EASE }, 0)
-      .to(S, { zoom: 1, duration: DAMSO.ZOOM_DUR, ease: DAMSO.EASE }, 0)
-      .to(S, { build: 1, duration: DAMSO.BUILD_DUR, ease: DAMSO.EASE }, DAMSO.BUILD_POS);
+    });
+  }
+
+  // hard-stop the running intro (kills its timeline + the S-proxy tweens +
+  // onUpdate render) and clear the wrapper rise. Safe to call any time.
+  function stopIntro() {
+    if (introTl) { introTl.kill(); introTl = null; }
+    isIntroPlaying = false;
+    gsap.set(list, { yPercent: 0 });
+  }
+
+  // user interacted mid-intro: finish it instantly so the action starts from
+  // the resting coverflow instead of fighting the still-running timeline.
+  function finishIntroNow() {
+    if (!isIntroPlaying && !introTl) return;
+    stopIntro();
+    settleAfterIntro();
   }
 
   function shiftClosedSlider(direction) {
@@ -624,6 +747,7 @@ function initProjectSlider() {
   function moveNext(event) {
     event?.preventDefault();
     event?.stopPropagation();
+    if (isIntroPlaying) { finishIntroNow(); return; } // first tap skips the intro
     if (isMorphing) return;
     if (isOpen) { switchOpenProject(1); return; }
     shiftClosedSlider(1);
@@ -632,6 +756,7 @@ function initProjectSlider() {
   function movePrev(event) {
     event?.preventDefault();
     event?.stopPropagation();
+    if (isIntroPlaying) { finishIntroNow(); return; } // first tap skips the intro
     if (isMorphing) return;
     if (isOpen) { switchOpenProject(-1); return; }
     shiftClosedSlider(-1);
@@ -727,17 +852,17 @@ function initProjectSlider() {
   }
 
   function animateSlidesBack() {
+    // land back on the SAME resting coverflow the closed slider uses
+    // (damsoRest, viewport-aware) so closing detail mode is seamless — matches
+    // updateSliderPosition()/settleAfterIntro() exactly, no jump on next tap.
     const timeline = gsap.timeline();
     slideItems.forEach((item) => {
-      const active = item.relativeIndex === 0;
+      damsoSize(item.element);
+      const t = damsoRest(item.relativeIndex);
       gsap.killTweensOf(item.element);
       timeline.to(item.element, {
-        x: item.relativeIndex * layout.slideWidth,
-        y: 0,
-        scale: active ? (DAMSO.X + DAMSO.G) / 100 : 1,
-        zIndex: active ? 100 : 1,
-        opacity: Math.abs(item.relativeIndex) > 2 ? 0 : 1,
-        visibility: "visible",
+        x: t.x, y: t.y, scale: t.scale, zIndex: t.zIndex, opacity: t.opacity,
+        visibility: t.opacity > 0 ? "visible" : "hidden",
         filter: "blur(0px)",
         duration: 0.85, ease: "power3.out", overwrite: true
       }, 0);
@@ -766,6 +891,7 @@ function initProjectSlider() {
   function toggleDetailMode(event) {
     event?.preventDefault();
     event?.stopPropagation();
+    if (isIntroPlaying) { finishIntroNow(); return; } // first tap skips the intro
     if (isMorphing || isCardSwitching) return;
 
     isMorphing = true;
@@ -801,8 +927,10 @@ function initProjectSlider() {
   // ── Responsive Refresh ─────────────────────────────────────
   function refreshResponsiveLayout() {
     if (isMorphing || isCardSwitching) return;
+    if (isIntroPlaying) stopIntro(); // resize mid-intro: cut it, settle below
     const wasOpen = isOpen;
     layout = getLayoutConfig();
+    DAMSO = getDamsoConfig(); // re-tune coverflow geometry across the 992 split
     controllerTimeline.kill();
     setupControllerGeometry();
     controllerTimeline = createControllerTimeline();
@@ -854,7 +982,8 @@ function initProjectSlider() {
   centerBtn.addEventListener("click", toggleDetailMode);
   window.addEventListener("resize", onResize);
 
-    if (DAMSO.INTRO_ON && !damsoIntroPlayed && !mobileQuery.matches) {
+    if (DAMSO.INTRO_ON && !damsoIntroPlayed) {
+    // sandbox intro now runs on EVERY viewport (mobile uses the <992 branch)
     damsoIntroPlayed = true;
     gsap.set([list, controller], { autoAlpha: 1 });
     playDamsoIntro();
@@ -869,6 +998,7 @@ function initProjectSlider() {
     centerBtn.removeEventListener("click", toggleDetailMode);
     window.removeEventListener("resize", onResize);
 
+    stopIntro(); // kill the intro timeline + proxy tweens if still running
     gsap.killTweensOf([activeCard, standbyCard, detailBackground, detailBackgroundImage, controller, controllerInner, controllerIcon, controllerMenuLabel, arrowLayer, list]);
     if (prevArrowTrack) gsap.killTweensOf(prevArrowTrack);
     if (nextArrowTrack) gsap.killTweensOf(nextArrowTrack);
@@ -1684,6 +1814,90 @@ function injectMenuFixCSS() {
   document.head.appendChild(styleFix);
 }
 
+function runPreloaderOncePerTab() {
+  const FLAG = "preloader_shown_v1";
+  if (sessionStorage.getItem(FLAG)) return;
+
+  sessionStorage.setItem(FLAG, "1");
+
+  const pre = document.createElement("div");
+  pre.className = "preloader";
+  pre.innerHTML = `<div class="preloader-percent">0%</div>`;
+  document.body.appendChild(pre);
+
+  const style = document.createElement("style");
+  style.textContent = `
+.preloader {
+  position: fixed;
+  inset: 0;
+  background: #fff;
+  z-index: 99999;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding: 3rem;
+  pointer-events: none;
+}
+
+.preloader-percent {
+  font-family: "Urbanist", system-ui, -apple-system, sans-serif;
+  font-size: 42px;
+  font-weight: 500;
+  color: #000;
+  letter-spacing: 0.02em;
+}
+`;
+
+  document.head.appendChild(style);
+
+  const percent = pre.querySelector(".preloader-percent");
+  const current = { value: 0 };
+
+  const delayElement = document.querySelector("#delay-skew");
+  if (delayElement) delayElement.style.opacity = 0;
+
+  gsap.to(current, {
+    value: 100,
+    duration: 1,
+    onUpdate: () =>
+      (percent.textContent = `${Math.round(current.value)}%`),
+    onComplete: () => {
+      gsap.to(pre, {
+        opacity: 0,
+        duration: 0.6,
+        ease: "power2.inOut",
+        onComplete: () => pre.remove(),
+      });
+    },
+  });
+
+  if (delayElement) {
+    const text = new SplitType(delayElement, {
+      types: "lines, words",
+      lineClass: "word-line",
+    });
+
+    const word = delayElement.querySelectorAll(".word-line .word");
+
+    gsap.fromTo(
+      word,
+      { y: "100%", skewX: "-6", opacity: 0 },
+      {
+        y: "0%",
+        skewX: "0",
+        opacity: 1,
+        duration: 2,
+        stagger: 0.03,
+        ease: "expo.out",
+      }
+    );
+  }
+
+  initSkewUp();
+}
+
+document.addEventListener("DOMContentLoaded", runPreloaderOncePerTab);
+
 function applyHamburgerVisibilityFix() {
   const burger = document.querySelector(".hamburger-wrapper");
   const menuOuter =
@@ -2149,6 +2363,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   initLenis();
   initBurgerMenu();
+  runPreloaderOncePerTab();
 
   injectGlobalPlayer();
   initGlobalTrack();
