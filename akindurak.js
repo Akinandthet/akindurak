@@ -549,6 +549,12 @@ function initProjectSlider() {
     // stop any in-flight positioning tweens before we take control
     slideItems.forEach((it) => gsap.killTweensOf(it.element));
 
+    // The list is CSS-centred via translate(-50%,-50%). The moment GSAP writes
+    // any transform on it, that CSS is lost — so make GSAP OWN the centring here
+    // (identical values). Everything else leaves the list transform alone, so it
+    // stays centred; no yPercent "rise" that would clobber the -50% translateY.
+    gsap.set(list, { xPercent: -50, yPercent: -50 });
+
     // the n core slides, indexed like the sandbox items (0..n-1 = image order).
     // core window = relativeIndex in [lo, lo+n-1]; everything else is a buffer
     // duplicate that stays parked off-stage during the intro.
@@ -626,8 +632,11 @@ function initProjectSlider() {
       .fromTo(S, { build: 0 }, { build: 1, duration: DAMSO.BUILD_DUR }, DAMSO.BUILD_POS)
       .fromTo(S, { sweep: DAMSO.SWEEP_START }, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY }, 0)
       .fromTo(S, { spread: 0 }, { spread: 1, duration: DAMSO.SPREAD_DUR, delay: DAMSO.SPREAD_DELAY }, 0)
-      .fromTo(S, { zoom: DAMSO.ZOOM_START }, { zoom: 1, duration: DAMSO.ZOOM_DUR }, 0)
-      .fromTo(list, { yPercent: DAMSO.RISE_PCT }, { yPercent: 0, duration: DAMSO.RISE_DUR }, DAMSO.RISE_POS);
+      .fromTo(S, { zoom: DAMSO.ZOOM_START }, { zoom: 1, duration: DAMSO.ZOOM_DUR }, 0);
+    // No wrapper "rise" tween: animating the list's yPercent in GSAP overwrites
+    // its CSS translate(-50%,-50%) Y-centring and drops the whole coverflow
+    // ~50% of the list height off-centre. The rise is a minor flourish; skipping
+    // it keeps the coverflow reliably centred (the sweep/spread/zoom/build remain).
   }
 
   // settle EVERY slide instantly onto its resting coverflow slot. The core
@@ -637,7 +646,7 @@ function initProjectSlider() {
   function settleAfterIntro() {
     isIntroPlaying = false;
     introTl = null;
-    gsap.set(list, { yPercent: 0 });
+    gsap.set(list, { xPercent: -50, yPercent: -50 }); // keep the list centred (GSAP-owned)
     slideItems.forEach((item) => {
       damsoSize(item.element);
       const t = damsoRest(item.relativeIndex);
@@ -653,7 +662,7 @@ function initProjectSlider() {
   function stopIntro() {
     if (introTl) { introTl.kill(); introTl = null; }
     isIntroPlaying = false;
-    gsap.set(list, { yPercent: 0 });
+    gsap.set(list, { xPercent: -50, yPercent: -50 }); // keep the list centred (GSAP-owned)
   }
 
   // user interacted mid-intro: finish it instantly so the action starts from
@@ -985,10 +994,35 @@ function initProjectSlider() {
     if (DAMSO.INTRO_ON && !damsoIntroPlayed) {
     // sandbox intro now runs on EVERY viewport (mobile uses the <992 branch)
     damsoIntroPlayed = true;
-    gsap.set([list, controller], { autoAlpha: 1 });
-    playDamsoIntro();
+    startIntroAfterPreloader();
   } else {
     gsap.to([list, controller], { autoAlpha: 1, duration: 0.5, ease: "power2.out", delay: 0.1 });
+  }
+
+  // Run the intro only AFTER the once-per-tab white preloader has cleared. The
+  // preloader covers the page for ~1.6s; if the intro plays underneath it, its
+  // tight cluster/sliver opening is wasted and users first SEE the spread phase
+  // — where every slide shows its full white frame ("border"). Waiting makes the
+  // full cluster -> spread -> settle visible, exactly like the index.html sandbox.
+  function startIntroAfterPreloader() {
+    function go() {
+      gsap.set([list, controller], { autoAlpha: 1 });
+      playDamsoIntro();
+    }
+    if (!document.querySelector(".preloader")) { go(); return; } // no preloader this load
+    let started = false;
+    function fire() {
+      if (started) return;
+      started = true;
+      observer.disconnect();
+      clearTimeout(failsafe);
+      go();
+    }
+    const observer = new MutationObserver(function () {
+      if (!document.querySelector(".preloader")) fire(); // preloader node removed
+    });
+    observer.observe(document.body, { childList: true });
+    const failsafe = setTimeout(fire, 3500); // never wait forever
   }
 
   // ── Cleanup für Barba ──────────────────────────────────────
