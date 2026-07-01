@@ -1863,90 +1863,6 @@ function injectMenuFixCSS() {
   document.head.appendChild(styleFix);
 }
 
-function runPreloaderOncePerTab() {
-  const FLAG = "preloader_shown_v1";
-  if (sessionStorage.getItem(FLAG)) return;
-
-  sessionStorage.setItem(FLAG, "1");
-
-  const pre = document.createElement("div");
-  pre.className = "preloader";
-  pre.innerHTML = `<div class="preloader-percent">0%</div>`;
-  document.body.appendChild(pre);
-
-  const style = document.createElement("style");
-  style.textContent = `
-.preloader {
-  position: fixed;
-  inset: 0;
-  background: #fff;
-  z-index: 99999;
-  display: flex;
-  align-items: flex-end;
-  justify-content: flex-end;
-  padding: 3rem;
-  pointer-events: none;
-}
-
-.preloader-percent {
-  font-family: "Urbanist", system-ui, -apple-system, sans-serif;
-  font-size: 42px;
-  font-weight: 500;
-  color: #000;
-  letter-spacing: 0.02em;
-}
-`;
-
-  document.head.appendChild(style);
-
-  const percent = pre.querySelector(".preloader-percent");
-  const current = { value: 0 };
-
-  const delayElement = document.querySelector("#delay-skew");
-  if (delayElement) delayElement.style.opacity = 0;
-
-  gsap.to(current, {
-    value: 100,
-    duration: 1,
-    onUpdate: () =>
-      (percent.textContent = `${Math.round(current.value)}%`),
-    onComplete: () => {
-      gsap.to(pre, {
-        opacity: 0,
-        duration: 0.6,
-        ease: "power2.inOut",
-        onComplete: () => pre.remove(),
-      });
-    },
-  });
-
-  if (delayElement) {
-    const text = new SplitType(delayElement, {
-      types: "lines, words",
-      lineClass: "word-line",
-    });
-
-    const word = delayElement.querySelectorAll(".word-line .word");
-
-    gsap.fromTo(
-      word,
-      { y: "100%", skewX: "-6", opacity: 0 },
-      {
-        y: "0%",
-        skewX: "0",
-        opacity: 1,
-        duration: 2,
-        stagger: 0.03,
-        ease: "expo.out",
-      }
-    );
-  }
-
-  initSkewUp();
-}
-
-document.addEventListener("DOMContentLoaded", runPreloaderOncePerTab);
-
 function applyHamburgerVisibilityFix() {
   const burger = document.querySelector(".hamburger-wrapper");
   const menuOuter =
@@ -2412,7 +2328,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   initLenis();
   initBurgerMenu();
-  runPreloaderOncePerTab();
 
   injectGlobalPlayer();
   initGlobalTrack();
