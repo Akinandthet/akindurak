@@ -127,7 +127,21 @@ function initProjectSlider() {
     return cfg;
   }
   let DAMSO = getDamsoConfig();
-  // force each slide to the sandbox size/shape (portrait + white frame)
+
+  // Frame colour = the PAGE background (not hardcoded #fff). The frame is what
+  // creates the gaps between overlapping slivers; if it's brighter than the page
+  // it reads as a visible white border. The live body is #faf9f9, the sandbox is
+  // #fff — read it live so the frame always blends and the gaps show page colour.
+  function getFrameColor() {
+    var c = document.body && getComputedStyle(document.body).backgroundColor;
+    if (!c || c === "rgba(0, 0, 0, 0)" || c === "transparent") {
+      c = getComputedStyle(document.documentElement).backgroundColor;
+    }
+    return (!c || c === "rgba(0, 0, 0, 0)" || c === "transparent") ? "#ffffff" : c;
+  }
+  let frameColor = getFrameColor();
+
+  // force each slide to the sandbox size/shape (portrait + page-coloured frame)
   function damsoSize(item) {
     item.style.width = (DAMSO.X / DAMSO.N_REF * 100).toFixed(3) + "vw";
     item.style.aspectRatio = DAMSO.ASPECT;
@@ -136,10 +150,11 @@ function initProjectSlider() {
     item.style.transformOrigin = "50% 50%"; // grow from centre (symmetric)
     item.style.borderRadius = (DAMSO.RADIUS || 0) + "px"; // sandbox --radius
     if (DAMSO.WHITE_FRAME > 0) {
-      // white box + white frame -> overlapping slivers show WHITE between them
-      // (the damso "half-cut" look), exactly like the index.html sandbox.
-      item.style.background = "#fff";
-      item.style.border = DAMSO.WHITE_FRAME + "px solid #fff";
+      // page-coloured box + frame -> overlapping slivers show the PAGE colour
+      // between them (the damso "half-cut" look) while the frame stays invisible
+      // against the page at rest. Matches index.html (there the page IS white).
+      item.style.background = frameColor;
+      item.style.border = DAMSO.WHITE_FRAME + "px solid " + frameColor;
     } else {
       item.style.border = "0";
     }
