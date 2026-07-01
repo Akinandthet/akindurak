@@ -96,8 +96,7 @@ function initProjectSlider() {
     N_REF: 1440, B: 397, W: 335, X: 100, G: 124, // geometry from the sandbox
     ASPECT: "4 / 5",   // portrait slides (sandbox)
     WHITE_FRAME: 0,    // px white border (0 = off) -> white-between on overlap
-    VISIBLE: 2,        // |rel| <= VISIBLE shown (settled: 5 on screen)
-    MAX_COVERS: 6,     // intro: ONLY this many covers emerge; the rest attach as the rail moves (matches sandbox). Tune 5/6/7
+    VISIBLE: 2,        // |rel| <= VISIBLE shown (5 on screen)
     INTRO_ON: true,
     SWEEP_START: 12, SWEEP_DUR: 3, SWEEP_DELAY: -0.4,
     SPREAD_DUR: 2.5, SPREAD_DELAY: -0.3,
@@ -516,19 +515,11 @@ function initProjectSlider() {
     function render() {
       const r = window.innerWidth / DAMSO.N_REF, off = damsoOffset();
       const nsp = DAMSO.W * r * S.spread, lsp = DAMSO.B * r * S.spread;
-      // wrap every slide into its slot (duplicate buffer slides share a slot)
-      const info = slideItems.map(({ element, relativeIndex }) => {
+      slideItems.forEach(({ element, relativeIndex }) => {
         let i = relativeIndex + S.sweep;
         i = i - n * Math.round(i / n); // wrap -> seamless marquee
-        return { element, i };
-      });
-      // ONLY the MAX_COVERS closest DISTINCT positions may show; the rest wait
-      // off-stage and attach as the rail keeps moving (damso: ~6 emerge)
-      const distinct = [...new Set(info.map((x) => x.i))].sort((p, q) => Math.abs(p) - Math.abs(q));
-      const allowed = new Set(distinct.slice(0, DAMSO.MAX_COVERS));
-      info.forEach(({ element, i }) => {
         const a = Math.abs(i), s = i < 0 ? -1 : i > 0 ? 1 : 0;
-        if (!allowed.has(i)) { gsap.set(element, { opacity: 0, visibility: "hidden" }); return; }
+        if (a > DAMSO.VISIBLE + 0.5) { gsap.set(element, { opacity: 0, visibility: "hidden" }); return; }
         const o = a > 1 ? i * nsp + (lsp - nsp) * s : i * lsp;
         const bump = a < 1 ? 1 - a : 0; // only the centred slot swells
         const scale = ((DAMSO.X + bump * DAMSO.G * S.build) / 100) * S.zoom;
