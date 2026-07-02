@@ -565,11 +565,11 @@ function initProjectSlider() {
     // stop any in-flight positioning tweens before we take control
     slideItems.forEach((it) => gsap.killTweensOf(it.element));
 
-    // The list is CSS-centred via translate(-50%,-50%). The moment GSAP writes
-    // any transform on it, that CSS is lost — so make GSAP OWN the centring here
-    // (identical values). Everything else leaves the list transform alone, so it
-    // stays centred; no yPercent "rise" that would clobber the -50% translateY.
-    gsap.set(list, { xPercent: -50, yPercent: -50 });
+    // The list is CSS-centred via translate(-50%,-50%). GSAP parses that CSS
+    // transform into PIXEL x/y and then ADDS xPercent/yPercent on top — so the
+    // -50% would apply twice, shoving the whole coverflow half a list-box left
+    // and up. Zero the parsed pixel part and let the percent own the centring.
+    gsap.set(list, { xPercent: -50, yPercent: -50, x: 0, y: 0 });
 
     // the n core slides, indexed like the sandbox items (0..n-1 = image order).
     // core window = relativeIndex in [lo, lo+n-1]; everything else is a buffer
@@ -668,7 +668,7 @@ function initProjectSlider() {
   function settleAfterIntro() {
     isIntroPlaying = false;
     introTl = null;
-    gsap.set(list, { xPercent: -50, yPercent: -50 }); // keep the list centred (GSAP-owned)
+    gsap.set(list, { xPercent: -50, yPercent: -50, x: 0, y: 0 }); // keep the list centred (GSAP-owned, pixel part zeroed)
     slideItems.forEach((item) => {
       damsoSize(item.element);
       const t = damsoRest(item.relativeIndex);
@@ -688,7 +688,7 @@ function initProjectSlider() {
   function stopIntro() {
     if (introTl) { introTl.kill(); introTl = null; }
     isIntroPlaying = false;
-    gsap.set(list, { xPercent: -50, yPercent: -50 }); // keep the list centred (GSAP-owned)
+    gsap.set(list, { xPercent: -50, yPercent: -50, x: 0, y: 0 }); // keep the list centred (GSAP-owned, pixel part zeroed)
   }
 
   // user interacted mid-intro: finish it instantly so the action starts from
