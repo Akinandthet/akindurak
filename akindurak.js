@@ -104,20 +104,24 @@ function initProjectSlider() {
       // shared look + intro timeline (identical desktop/mobile)
       X: 100,            // base box (the w-100 box) -> scale 1
       FOCUS: 0,          // index of the image that ends centred (sandbox = 0)
-      ASPECT: "4 / 5",   // portrait slides (sandbox)
+      ASPECT: "1 / 1",   // square slides (damso: aspect-square)
+      ASPECT_H: 1,       // numeric height/width of ASPECT — keep the two in sync
       WHITE_FRAME: 6,    // px white border (sandbox = 6) -> white gaps between overlapping slivers
       RADIUS: 2,         // px corner radius (sandbox --radius)
       MAX_COVERS: 6,     // ONLY this many covers show at once (sandbox)
       INTRO_ON: true,
+      // Intro timing = damso's original tween set stretched ~1.25x (client:
+      // spread phase slightly longer/smoother). No negative delays: every proxy
+      // starts at 0 like damso, so the expo.inOut lead-in is never clipped.
       EASE: "expo.inOut",
-      SWEEP_START: 12, SWEEP_DUR: 3, SWEEP_DELAY: -0.4,
-      SPREAD_DUR: 2.5, SPREAD_DELAY: -0.3,
-      ZOOM_START: 1.8, ZOOM_DUR: 2.8,
-      BUILD_DUR: 1.7, BUILD_POS: 1,
-      RISE_PCT: 10, RISE_DUR: 3, RISE_POS: 0.2,
+      SWEEP_START: 12, SWEEP_DUR: 3.7, SWEEP_DELAY: 0,
+      SPREAD_DUR: 3.2, SPREAD_DELAY: 0,
+      ZOOM_START: 2.5, ZOOM_DUR: 3.5,
+      BUILD_DUR: 2.1, BUILD_POS: 1.25,
+      RISE_PCT: 10, RISE_DUR: 3.7, RISE_POS: 0.25,
       // desktop geometry (design px @ a 1440 mockup)
       N_REF: 1440, B: 397, W: 335, G: 124,
-      J_VIS: 4,          // cull window: a slot with |i| >= J_VIS is never drawn
+      J_VIS: 3,          // cull window: a slot with |i| >= J_VIS is never drawn (damso j=3)
       VISIBLE: 2         // resting: |rel| <= VISIBLE shown (5 on screen)
     };
     if (window.innerWidth < 992) {
@@ -165,7 +169,7 @@ function initProjectSlider() {
   // slides are anchored at the list's top-left -> centre them in the list box
   function damsoOffset() {
     const boxW = window.innerWidth * DAMSO.X / DAMSO.N_REF;
-    return { x: (list.offsetWidth - boxW) / 2, y: (list.offsetHeight - boxW * 1.25) / 2 };
+    return { x: (list.offsetWidth - boxW) / 2, y: (list.offsetHeight - boxW * DAMSO.ASPECT_H) / 2 };
   }
   // resting coverflow position/scale for an integer slot (damso geometry)
   function damsoRest(rel) {
@@ -641,7 +645,7 @@ function initProjectSlider() {
 
     render(); // initial state: stacked at centre, zoomed, swept off, focus flat
 
-    // exact sandbox intro: five simultaneous expo.inOut tweens (~3s total).
+    // exact sandbox intro: the simultaneous expo.inOut proxy tweens (~4s total).
     // Keep the handle + a lock so interaction/resize/destroy can stop it.
     isIntroPlaying = true;
     wheelShown = false;
@@ -650,15 +654,20 @@ function initProjectSlider() {
       .fromTo(S, { sweep: DAMSO.SWEEP_START }, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY }, 0)
       .fromTo(S, { spread: 0 }, { spread: 1, duration: DAMSO.SPREAD_DUR, delay: DAMSO.SPREAD_DELAY }, 0)
       .fromTo(S, { zoom: DAMSO.ZOOM_START }, { zoom: 1, duration: DAMSO.ZOOM_DUR }, 0)
+      // damso wrapper rise: the whole coverflow drifts up ~10% of the BASE box
+      // height as it settles. Tweened on the PIXEL y that rides on top of the
+      // GSAP-owned yPercent -50 centring — never animate yPercent here, that
+      // would replace the -50% and drop the coverflow half a list-box down.
+      // stopIntro/settleAfterIntro reset y to 0, so an interrupted intro still
+      // ends perfectly centred.
+      .fromTo(list,
+        { y: (DAMSO.RISE_PCT / 100) * (window.innerWidth * DAMSO.X / DAMSO.N_REF) * DAMSO.ASPECT_H },
+        { y: 0, duration: DAMSO.RISE_DUR }, DAMSO.RISE_POS)
       // Slide the wheel up ~0.8s before the timeline mathematically ends, so it
       // starts as the centre image is on its final, gentle settle (expo.inOut
       // tails off early, so the remaining motion is barely perceptible). Tune
       // this offset to shift the wheel entrance earlier/later.
       .add(revealWheelUp, "-=0.8");
-    // No wrapper "rise" tween: animating the list's yPercent in GSAP overwrites
-    // its CSS translate(-50%,-50%) Y-centring and drops the whole coverflow
-    // ~50% of the list height off-centre. The rise is a minor flourish; skipping
-    // it keeps the coverflow reliably centred (the sweep/spread/zoom/build remain).
   }
 
   // settle EVERY slide instantly onto its resting coverflow slot. The core
