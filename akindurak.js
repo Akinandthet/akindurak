@@ -95,10 +95,12 @@ function initProjectSlider() {
   let layout = getLayoutConfig();
 
   // ── EXACT sandbox (damso) coverflow engine + one-time entrance ──────
-  // Geometry + intro timeline ported VERBATIM from the index.html sandbox,
-  // INCLUDING the sandbox's desktop/mobile split (switch at <992 = damso's
-  // mockupWidth breakpoint). damsoSize/Offset/Rest + the intro all read the
-  // CURRENT `DAMSO`, so a resize across 992 re-tunes the whole coverflow.
+  // Geometry + intro timeline ported VERBATIM from the index.html sandbox.
+  // Desktop/mobile split at <480 = the WEBFLOW mobile breakpoint (<=479px),
+  // NOT damso's 992: the akindurak layout wants the desktop coverflow (r-
+  // scaled) all the way down through tablet (480-991) and the big-centre
+  // damso phone look only on real phones. damsoSize/Offset/Rest + the intro
+  // all read the CURRENT `DAMSO`, so a resize across 480 re-tunes everything.
   function getDamsoConfig() {
     const cfg = {
       // shared look + intro timeline (identical desktop/mobile)
@@ -127,8 +129,8 @@ function initProjectSlider() {
       J_VIS: 3,          // cull window: a slot with |i| >= J_VIS is never drawn (damso j=3)
       VISIBLE: 2         // resting: |rel| <= VISIBLE shown (5 on screen)
     };
-    if (window.innerWidth < 992) {
-      // sandbox mobile branch (mockupWidth ~390, bigger centre, fewer covers)
+    if (window.innerWidth < 480) {
+      // phone branch (damso mobile constants: mockupWidth ~390, bigger centre)
       cfg.N_REF = 390; cfg.B = 221; cfg.W = 110; cfg.G = 160;
       cfg.J_VIS = 2; cfg.VISIBLE = 1;
     }
@@ -990,7 +992,7 @@ function initProjectSlider() {
     if (isIntroPlaying) { stopIntro(); gsap.set(controller, { autoAlpha: 1, y: 0 }); wheelShown = true; } // resize cut the intro: settle + show wheel
     const wasOpen = isOpen;
     layout = getLayoutConfig();
-    DAMSO = getDamsoConfig(); // re-tune coverflow geometry across the 992 split
+    DAMSO = getDamsoConfig(); // re-tune coverflow geometry across the 480 split
     controllerTimeline.kill();
     setupControllerGeometry();
     controllerTimeline = createControllerTimeline();
@@ -1025,6 +1027,15 @@ function initProjectSlider() {
 
   let controllerTimeline = createControllerTimeline();
 
+  // The Webflow layout shows a fullscreen BLACK overlay (.only-web-mobile-banner,
+  // fixed, z-6) between 480px and 991px — a "desktop/phone only" notice from
+  // before the coverflow worked at tablet widths. The slider now runs at every
+  // width and draws on top of it, which read as "dark background + broken
+  // sizes" on tablet. Keep that overlay off whenever the slider is active.
+  document.querySelectorAll(".only-web-mobile-banner").forEach(function (el) {
+    el.style.display = "none";
+  });
+
   preloadProjectImages();
   rebuildSlides(false);
   updateSliderPosition();
@@ -1043,7 +1054,7 @@ function initProjectSlider() {
   window.addEventListener("resize", onResize);
 
     if (DAMSO.INTRO_ON && !damsoIntroPlayed) {
-    // sandbox intro now runs on EVERY viewport (mobile uses the <992 branch)
+    // sandbox intro now runs on EVERY viewport (phones use the <480 branch)
     damsoIntroPlayed = true;
     startIntroAfterPreloader();
   } else {
