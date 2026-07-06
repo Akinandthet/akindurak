@@ -108,17 +108,20 @@ function initProjectSlider() {
       ASPECT_H: 1,       // numeric height/width of ASPECT — keep the two in sync
       WHITE_FRAME: 6,    // px white border (sandbox = 6) -> white gaps between overlapping slivers
       RADIUS: 2,         // px corner radius (sandbox --radius)
-      MAX_COVERS: 6,     // ONLY this many covers show at once (sandbox)
       INTRO_ON: true,
-      // Intro timing = damso's original tween set stretched ~1.25x (client:
-      // spread phase slightly longer/smoother). No negative delays: every proxy
-      // starts at 0 like damso, so the expo.inOut lead-in is never clipped.
+      // Intro timing = damso's REAL tween set (extracted from their CoverFlow
+      // chunk) stretched 1.25x (client: spread phase slightly longer/smoother).
+      // damso: sweep 12->0 dur 3 delay -0.4 | spread 0->1 dur 2.5 delay -0.3 |
+      // zoom 2.5->1 dur 2.8 | build 0->1 dur 1.7 @1 | rise 10%->0 dur 3 @0.2.
+      // The NEGATIVE delays are damso's: they clip the glacial expo.inOut
+      // lead-in so the cluster is already drifting at frame 0 instead of
+      // sitting frozen for ~1s.
       EASE: "expo.inOut",
-      SWEEP_START: 12, SWEEP_DUR: 3.7, SWEEP_DELAY: 0,
-      SPREAD_DUR: 3.2, SPREAD_DELAY: 0,
+      SWEEP_START: 12, SWEEP_DUR: 3.75, SWEEP_DELAY: -0.5,
+      SPREAD_DUR: 3.125, SPREAD_DELAY: -0.375,
       ZOOM_START: 2.5, ZOOM_DUR: 3.5,
-      BUILD_DUR: 2.1, BUILD_POS: 1.25,
-      RISE_PCT: 10, RISE_DUR: 3.7, RISE_POS: 0.25,
+      BUILD_DUR: 2.125, BUILD_POS: 1.25,
+      RISE_PCT: 10, RISE_DUR: 3.75, RISE_POS: 0.25,
       // desktop geometry (design px @ a 1440 mockup)
       N_REF: 1440, B: 397, W: 335, G: 124,
       J_VIS: 3,          // cull window: a slot with |i| >= J_VIS is never drawn (damso j=3)
@@ -615,14 +618,12 @@ function initProjectSlider() {
         slot[k] = i;
       }
 
-      // only the MAX_COVERS closest to centre may show; the rest wait off-stage
-      const order = [];
-      for (let k = 0; k < n; k++) order.push(k);
-      order.sort((p, q) => Math.abs(slot[p]) - Math.abs(slot[q]));
-      const show = {};
-      for (let m = 0; m < Math.min(DAMSO.MAX_COVERS, n); m++) show[order[m]] = true;
-
-      // pass 2: lay out every shown item
+      // pass 2: lay out every item. Visibility is damso's rule VERBATIM:
+      // |i| < j and NOTHING else. (An earlier port also rank-culled to the 6
+      // covers closest to centre — damso has no such rule, and with n items
+      // on screen it constantly changed WHICH card was the culled one, making
+      // cards blink out mid-screen and pop back on top. That was the client's
+      // "cards jump to the front" bug.)
       for (let k = 0; k < n; k++) {
         const i = slot[k];
         const a = i === 0 ? 0 : i < 0 ? -1 : 1;
@@ -631,7 +632,7 @@ function initProjectSlider() {
         const sc = Math.abs(i) < 1
           ? ((DAMSO.X + (1 - Math.abs(i)) * DAMSO.G * S.build) / 100) * S.zoom
           : S.zoom;
-        if (show[k] && Math.abs(i) < DAMSO.J_VIS) {
+        if (Math.abs(i) < DAMSO.J_VIS) {
           gsap.set(items[k], {
             x: off.x + o, y: off.y, scale: sc,
             visibility: "visible", opacity: 1, filter: "blur(0px)",
