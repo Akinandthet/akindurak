@@ -51,7 +51,11 @@ function initProjectSlider() {
   const mobileQuery = window.matchMedia("(max-width: 767px)");
   const BUFFER_SIZE = Math.max(5, cmsItems.length);
 
-  let currentIndex = 0;
+  // Final centre / hero after the intro (settleAfterIntro re-centres here). The
+  // ONE continuous sweep lands THIS image at centre while the previous CMS item
+  // (currentIndex-1) glides THROUGH centre and on to the LEFT neighbour in the
+  // same motion -- no pause, no stop. 1 => IPC centres, PORTRAIT (0) slides left.
+  let currentIndex = 1;
   let slideItems = [];
   let isOpen = false;
   let isMorphing = false;
@@ -119,11 +123,26 @@ function initProjectSlider() {
       // lead-in so the cluster is already drifting at frame 0 instead of
       // sitting frozen for ~1s.
       EASE: "expo.inOut",
-      SWEEP_START: 12, SWEEP_DUR: 3.75, SWEEP_DELAY: -0.5,
-      SPREAD_DUR: 3.125, SPREAD_DELAY: -0.375,
-      ZOOM_START: 2.5, ZOOM_DUR: 3.5,
-      BUILD_DUR: 2.125, BUILD_POS: 1.25,
-      RISE_PCT: 10, RISE_DUR: 3.75, RISE_POS: 0.25,
+      // CONTINUOUS HAND-OFF (client: the previous image must glide DIRECTLY to the
+      // left while the fresh image arrives at centre -- ONE motion, NO stop at
+      // centre). Keys to that:
+      //  * the sweep is a SINGLE tween sweepStart->0; only the FINAL image
+      //    (currentIndex) comes to rest at centre, the previous one glides through.
+      //  * the grow (build) is DELAYED (BUILD_POS) so it lands only on the final
+      //    centre image; the previous image crosses centre un-grown. n-INDEPENDENT.
+      // STABLE FIRST IMAGE (client: the same image must lead on EVERY refresh):
+      //  * SWEEP_EASE power3.inOut -- slow-in start, so the top of the opening
+      //    cluster HOLDS ~0.7s before the riffle accelerates. (power2.out moved
+      //    fastest at t=0: the stack's top image flipped every ~300ms from frame
+      //    one, so each refresh you'd catch a different "first image". Measured.)
+      //  * WHICH image leads is the sweep's start phase -- see the FIRST-IMAGE
+      //    LOCK in playDamsoIntro: it snaps the start so cmsItems[0] always leads.
+      SWEEP_START: 12, SWEEP_DUR: 3.0, SWEEP_DELAY: -0.15,
+      SWEEP_EASE: "power3.inOut",
+      SPREAD_DUR: 2.1, SPREAD_DELAY: -0.2,
+      ZOOM_START: 2.5, ZOOM_DUR: 2.2,
+      BUILD_DUR: 0.85, BUILD_POS: 2.1, BUILD_EASE: "power2.out",
+      RISE_PCT: 10, RISE_DUR: 2.8, RISE_POS: 0.2,
       // desktop geometry (design px @ a 1440 mockup)
       N_REF: 1440, B: 397, W: 335, G: 124,
       J_VIS: 3,          // cull window: a slot with |i| >= J_VIS is never drawn (damso j=3)
@@ -381,14 +400,31 @@ function initProjectSlider() {
   }
 
   // ── Karten-Rendering ───────────────────────────────────────
+  // Warm the browser cache for every project image AND return a promise that
+  // resolves once they're all loaded (or a safety cap elapses). The intro is
+  // gated on this so it always plays with the images ready -> the SAME image is
+  // prominent at the start on every refresh. Without it, the fixed-time
+  // preloader can lift while some CDN images are still loading, so which slide
+  // is visible first varies run to run (the "1st image keeps changing" bug).
   function preloadProjectImages() {
+    const loads = [];
     cmsItems.forEach((_, index) => {
       const project = getProject(index);
       if (!project.img) return;
-      const image = new Image();
-      image.decoding = "async";
-      image.src = project.img;
+      loads.push(new Promise((resolve) => {
+        const image = new Image();
+        image.decoding = "async";
+        image.onload = resolve;
+        image.onerror = resolve; // never block the intro on a broken image
+        image.src = project.img;
+        if (image.complete) resolve(); // already cached
+      }));
     });
+    // Cap the wait so a slow/hung image can never freeze the intro forever.
+    return Promise.race([
+      Promise.all(loads),
+      new Promise((resolve) => setTimeout(resolve, 4000)),
+    ]);
   }
 
   function getCardField(card, field) {
@@ -597,11 +633,24 @@ function initProjectSlider() {
     if (items.some((el) => !el)) { settleAfterIntro(); return; } // safety: buffer too small
 
     const posId = items.map((_el, i) => i); // per-item rolling slot id (damso posId)
+
+    // FIRST-IMAGE LOCK. During the clustered opening, the image the user sees is
+    // the TOP of the stack. Items surface (roll into view) at slot J_VIS, so the
+    // first stable top is cmsItems[(currentIndex + J_VIS - sweepStart) mod n].
+    // Snap the sweep start up to the next value satisfying
+    //   sweepStart ≡ currentIndex + J_VIS   (mod n)
+    // so the leading image is ALWAYS cmsItems[0] ("image 1") -- deterministic for
+    // any image count, on every refresh. (With the base 12 and currentIndex=1 the
+    // leader was cmsItems[1]; and it only reads as stable at all because
+    // SWEEP_EASE is slow-in -- see the config note.)
+    const sweepStart = DAMSO.SWEEP_START +
+      ((((currentIndex + DAMSO.J_VIS - DAMSO.SWEEP_START) % n) + n) % n);
+
     const S = {
       p: DAMSO.FOCUS,          // focus position (fixed during the intro)
       spread: 0,               // v  : 0 stacked -> 1 full coverflow spacing
       build: 0,                // y  : 0 -> 1, the focus image grows in
-      sweep: DAMSO.SWEEP_START,// Y  : 12 -> 0, right->left slot sweep
+      sweep: sweepStart,       // Y  : sweepStart -> 0, right->left slot sweep
       zoom: DAMSO.ZOOM_START   // et : 1.8 -> 1, global zoom-out
     };
 
@@ -653,8 +702,13 @@ function initProjectSlider() {
     isIntroPlaying = true;
     wheelShown = false;
     introTl = gsap.timeline({ defaults: { ease: DAMSO.EASE }, onUpdate: render, onComplete: settleAfterIntro })
-      .fromTo(S, { build: 0 }, { build: 1, duration: DAMSO.BUILD_DUR }, DAMSO.BUILD_POS)
-      .fromTo(S, { sweep: DAMSO.SWEEP_START }, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY }, 0)
+      // build (centre grow) is DELAYED + power2.out so it lands only on the FINAL
+      // centre image — the previous image glides through centre un-grown.
+      .fromTo(S, { build: 0 }, { build: 1, duration: DAMSO.BUILD_DUR, ease: DAMSO.BUILD_EASE }, DAMSO.BUILD_POS)
+      // ONE continuous sweep sweepStart->0: the previous image glides THROUGH
+      // centre (velocity > 0, never parks) and on to the left while the final
+      // image comes to rest at centre — no stop, no seam.
+      .fromTo(S, { sweep: sweepStart }, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY, ease: DAMSO.SWEEP_EASE }, 0)
       .fromTo(S, { spread: 0 }, { spread: 1, duration: DAMSO.SPREAD_DUR, delay: DAMSO.SPREAD_DELAY }, 0)
       .fromTo(S, { zoom: DAMSO.ZOOM_START }, { zoom: 1, duration: DAMSO.ZOOM_DUR }, 0)
       // damso wrapper rise: the whole coverflow drifts up ~10% of the BASE box
@@ -1036,7 +1090,7 @@ function initProjectSlider() {
     el.style.display = "none";
   });
 
-  preloadProjectImages();
+  const projectImagesReady = preloadProjectImages();
   rebuildSlides(false);
   updateSliderPosition();
 
@@ -1068,10 +1122,15 @@ function initProjectSlider() {
   // full cluster -> spread -> settle visible, exactly like the index.html sandbox.
   function startIntroAfterPreloader() {
     function go() {
-      // reveal only the coverflow; the wheel/controller stays hidden and fades
-      // in after the intro completes (settleAfterIntro) — matches damso.com.
-      gsap.set(list, { autoAlpha: 1 });
-      playDamsoIntro();
+      // Wait for the project images to be loaded before playing, so the SAME
+      // image is always prominent at the start (no run-to-run variance from CDN
+      // load timing). Capped inside preloadProjectImages so it can't hang.
+      projectImagesReady.then(function () {
+        // reveal only the coverflow; the wheel/controller stays hidden and fades
+        // in after the intro completes (settleAfterIntro) — matches damso.com.
+        gsap.set(list, { autoAlpha: 1 });
+        playDamsoIntro();
+      });
     }
     if (!document.querySelector(".preloader")) { go(); return; } // no preloader this load
     let started = false;
