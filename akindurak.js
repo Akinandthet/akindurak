@@ -143,6 +143,15 @@ function initProjectSlider() {
       ZOOM_START: 2.5, ZOOM_DUR: 2.2,
       BUILD_DUR: 0.85, BUILD_POS: 2.1, BUILD_EASE: "power2.out",
       RISE_PCT: 10, RISE_DUR: 2.8, RISE_POS: 0.2,
+      // LEAD-IN (client: the intro path felt too straight -> add a Damso-style
+      // entrance BEFORE the marquee: a slight front-pop scale-up, then a soft
+      // curved rightward drift that eases back as the right->left sweep takes
+      // over. Purely OVERLAID: pop (scale mult) settles to 1 and shift (x px)
+      // back to 0, so the sweep/spread/zoom timing, the wheel reveal, and the
+      // final settled layout are all left exactly as they were.
+      POP_START: 0.72, POP_DUR: 0.9, POP_EASE: "back.out(1.5)",
+      SHIFT_VW: 6, SHIFT_OUT_DUR: 0.7, SHIFT_OUT_EASE: "power2.out",
+      SHIFT_BACK_DUR: 1.4, SHIFT_BACK_EASE: "power2.inOut",
       // desktop geometry (design px @ a 1440 mockup)
       N_REF: 1440, B: 397, W: 335, G: 124,
       J_VIS: 3,          // cull window: a slot with |i| >= J_VIS is never drawn (damso j=3)
@@ -651,7 +660,9 @@ function initProjectSlider() {
       spread: 0,               // v  : 0 stacked -> 1 full coverflow spacing
       build: 0,                // y  : 0 -> 1, the focus image grows in
       sweep: sweepStart,       // Y  : sweepStart -> 0, right->left slot sweep
-      zoom: DAMSO.ZOOM_START   // et : 1.8 -> 1, global zoom-out
+      zoom: DAMSO.ZOOM_START,  // et : 1.8 -> 1, global zoom-out
+      pop: DAMSO.POP_START,    // lead-in: scale multiplier (front-pop) -> 1
+      shift: 0                 // lead-in: px x-offset (rightward drift) -> 0
     };
 
     // render() === the sandbox layout fn `ea`
@@ -685,7 +696,7 @@ function initProjectSlider() {
           : S.zoom;
         if (Math.abs(i) < DAMSO.J_VIS) {
           gsap.set(items[k], {
-            x: off.x + o, y: off.y, scale: sc,
+            x: off.x + o + S.shift, y: off.y, scale: sc * S.pop,
             visibility: "visible", opacity: 1, filter: "blur(0px)",
             zIndex: Math.floor(7 + i), force3D: true
           });
@@ -711,6 +722,15 @@ function initProjectSlider() {
       .fromTo(S, { sweep: sweepStart }, { sweep: 0, duration: DAMSO.SWEEP_DUR, delay: DAMSO.SWEEP_DELAY, ease: DAMSO.SWEEP_EASE }, 0)
       .fromTo(S, { spread: 0 }, { spread: 1, duration: DAMSO.SPREAD_DUR, delay: DAMSO.SPREAD_DELAY }, 0)
       .fromTo(S, { zoom: DAMSO.ZOOM_START }, { zoom: 1, duration: DAMSO.ZOOM_DUR }, 0)
+      // LEAD-IN entrance, overlaid on the sweep's slow power3.inOut start so the
+      // cluster reads as: front-pop scale-up -> soft curved drift to the RIGHT ->
+      // then the existing right->left marquee takes over. Both proxies return to
+      // neutral (pop->1 by ~0.9s, shift->0 by ~2.1s), well before the timeline
+      // ends, so every downstream tween, the wheel reveal, and the settled
+      // layout stay byte-for-byte as before — only the opening PATH changes.
+      .fromTo(S, { pop: DAMSO.POP_START }, { pop: 1, duration: DAMSO.POP_DUR, ease: DAMSO.POP_EASE }, 0)
+      .fromTo(S, { shift: 0 }, { shift: window.innerWidth * DAMSO.SHIFT_VW / 100, duration: DAMSO.SHIFT_OUT_DUR, ease: DAMSO.SHIFT_OUT_EASE }, 0.1)
+      .to(S, { shift: 0, duration: DAMSO.SHIFT_BACK_DUR, ease: DAMSO.SHIFT_BACK_EASE }, 0.1 + DAMSO.SHIFT_OUT_DUR)
       // damso wrapper rise: the whole coverflow drifts up ~10% of the BASE box
       // height as it settles. Tweened on the PIXEL y that rides on top of the
       // GSAP-owned yPercent -50 centring — never animate yPercent here, that
