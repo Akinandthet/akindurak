@@ -1327,6 +1327,26 @@ window.addEventListener("popstate", () => {
   };
 });
 
+// Back/forward CACHE restore (e.g. returning from an external link such as
+// LinkedIn via the browser back button). The page is served frozen from the
+// bfcache — no full load, no DOMContentLoaded, and Barba's transition pipeline
+// never runs — so the home intro would otherwise stay stuck on its settled end
+// state. event.persisted is true only for these restores; a normal reload
+// already replays the intro through DOMContentLoaded, so we skip it there.
+window.addEventListener("pageshow", (event) => {
+  if (!event.persisted) return;
+  const sliderList = document.querySelector(".cms-projects-list");
+  if (!sliderList) return; // only the home page carries the coverflow
+
+  // Tear the live slider down first: the restored DOM still holds the previous
+  // instance's listeners, clones and cards, so we destroy before re-init to
+  // avoid duplicates, then clear the intro latch so the replay runs clean.
+  if (sliderInstance && sliderInstance.destroy) sliderInstance.destroy();
+  delete sliderList.dataset.projectSliderInit;
+  damsoIntroPlayed = false;
+  sliderInstance = initProjectSlider();
+});
+
 function injectBaseStyles() {
   const styleEl = document.createElement("style");
 
@@ -2302,6 +2322,10 @@ if (detailBg) detailBg.remove();
   const sliderList = document.querySelector(".cms-projects-list");
   if (sliderList) {
     delete sliderList.dataset.projectSliderInit;
+    // Returning to the home coverflow (incl. browser back/forward, which Barba
+    // routes through this hook): clear the once-per-load intro latch so the
+    // fresh initProjectSlider() below replays the Damso intro from the start.
+    damsoIntroPlayed = false;
     sliderInstance = initProjectSlider();
   }
 }, 200);
