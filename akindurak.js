@@ -1679,6 +1679,37 @@ body:not(.is-home) .brand-word {
 
 body:not(.is-home) .brand-logo {
   display: inline-flex !important;
+}
+
+/* === Expanded project card artwork ===
+   The Webflow markup carries a stray "portfolio-gallery" class on the card's
+   hero <img>. That class is meant for the full-screen section, and its
+   "height:100vh; min-height:100svh" inflates the image box to the viewport
+   height (900px) inside a .card-image-wrap that is only 39rem (~466px) tall and
+   clips with overflow:hidden. object-fit:cover then centres the artwork inside
+   the OVERSIZED box, and the wrapper crops everything below its own height --
+   so the true centre of the artwork lands near the bottom of the visible window
+   (the IPC / AK logos "sitting low"). Pin the image to its wrapper so cover
+   centres against the box the visitor actually sees. Aspect-ratio agnostic and
+   shared by every project, matching the square thumbnail's framing. */
+.card-image-wrap {
+  position: relative;
+}
+
+.card-image-wrap > img,
+.card-image-wrap > img.card-hero-image,
+.card-image-wrap > img.portfolio-gallery {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+  object-position: center center;
 }`;
   document.head.appendChild(styleEl);
 }
@@ -1765,8 +1796,7 @@ function initBurgerMenu() {
     );
 
   const closeTl = gsap.timeline({ paused: true });
-  window.__closeMenuTl = closeTl;
-  window.__closeMenuTl.progress(0).pause(0);
+  closeTl.progress(0).pause(0);
 
   closeTl
     .to([...navLinks, ...numberHovers, ...socialText], {
@@ -1826,8 +1856,33 @@ function initBurgerMenu() {
     menuOpen = !menuOpen;
   }
 
+  // The menu lives OUTSIDE the Barba container, so a route change never
+  // re-creates it and never re-runs initBurgerMenu -- `menuOpen` therefore
+  // survives the navigation. Barba force-closes the menu on leave, so without
+  // this reset the flag stays `true` and the next click on the fresh page runs
+  // the CLOSE branch: the menu looks dead. Reachable in practice because
+  // toggleMenu() ignores clicks while the ~2.3s open timeline is still running,
+  // so "open menu -> immediately click a nav link" leaves menuOpen === true.
+  function forceCloseMenu() {
+    const wasOpen = menuOpen || document.body.classList.contains("menu-open");
+
+    menuOpen = false;
+    document.body.classList.remove("menu-open");
+    gsap.set(["html", "body"], { overflow: "" });
+
+    if (!wasOpen) return;
+    if (openTl.isActive()) openTl.pause();
+    closeTl.restart(true);
+  }
+
+  window.__forceCloseMenu = forceCloseMenu;
+
   burger.addEventListener("click", toggleMenu);
-  lineBlock.addEventListener("click", toggleMenu);
+
+  // .line-block normally sits INSIDE .hamburger-wrapper, so the burger listener
+  // already receives its bubbled clicks. Binding both would run toggleMenu twice
+  // per click. Only bind it when it is genuinely a separate element.
+  if (!burger.contains(lineBlock)) lineBlock.addEventListener("click", toggleMenu);
 
   navLinks.forEach((link) => {
     link.addEventListener("click", () => {
@@ -1857,6 +1912,41 @@ function initLenis() {
 
 function resetLenisScroll() {
   if (lenis) lenis.scrollTo(0, { immediate: true });
+}
+
+// initFreieArbeiten lifts the site chrome (nav, burger, menu) above its
+// full-screen iframe by writing inline styles onto elements that live OUTSIDE
+// the Barba container -- i.e. they are never re-created by a route change. Those
+// writes therefore have to be undone byte-for-byte on leave, or they leak into
+// every page visited afterwards. Stash the pre-existing inline values here so
+// cleanupFreieArbeiten can put them back.
+const FREIE_STASHED_PROPS = ["display", "position", "z-index", "overflow"];
+
+function stashInlineStyle(el) {
+  if (el.dataset.freieStash) return; // already stashed -> keep the ORIGINAL values
+  const saved = {};
+  FREIE_STASHED_PROPS.forEach((prop) => {
+    saved[prop] = el.style.getPropertyValue(prop);
+  });
+  el.dataset.freieStash = JSON.stringify(saved);
+}
+
+function restoreStashedInlineStyles() {
+  document.querySelectorAll("[data-freie-stash]").forEach((el) => {
+    let saved = {};
+    try {
+      saved = JSON.parse(el.dataset.freieStash) || {};
+    } catch (e) {
+      saved = {};
+    }
+    Object.entries(saved).forEach(([prop, value]) => {
+      // an empty stashed value means "there was no inline value" -> drop it, so
+      // the stylesheet (e.g. .nav-menu { z-index: 10001 }) governs again.
+      if (value) el.style.setProperty(prop, value);
+      else el.style.removeProperty(prop);
+    });
+    delete el.dataset.freieStash;
+  });
 }
 
 function initFreieArbeiten() {
@@ -1908,7 +1998,7 @@ function initFreieArbeiten() {
 
   hideSelectors.forEach((sel) =>
     document.querySelectorAll(sel).forEach((el) => {
-      el.dataset.prevDisplay = el.style.display;
+      stashInlineStyle(el);
       el.style.display = "none";
     })
   );
@@ -1922,11 +2012,11 @@ function initFreieArbeiten() {
     ".navbar",
   ];
 
+  // The chrome has to out-stack the iframe (z-index 1). Static elements need a
+  // stacking context of their own, since they precede the iframe in DOM order.
   showSelectors.forEach((sel) =>
     document.querySelectorAll(sel).forEach((el) => {
-      if (!el.dataset.prevPosition) {
-        el.dataset.prevPosition = getComputedStyle(el).position;
-      }
+      stashInlineStyle(el);
 
       el.style.position =
         getComputedStyle(el).position === "fixed"
@@ -1943,29 +2033,25 @@ function initFreieArbeiten() {
     document.querySelector(".menu-outer-wrapper");
 
   if (menuWrapper) {
+    stashInlineStyle(menuWrapper); // no-op if showSelectors already stashed it
     menuWrapper.style.position =
       menuWrapper.style.position || "relative";
     menuWrapper.style.zIndex = "11";
   }
 
+  stashInlineStyle(document.documentElement);
+  stashInlineStyle(document.body);
   document.documentElement.style.overflow = "hidden";
   document.body.style.overflow = "hidden";
 }
 
+// Safe to call at any time and any number of times: with nothing stashed it is a
+// no-op, so it doubles as the safety net on every route change.
 function cleanupFreieArbeiten() {
   const iframe = document.querySelector("iframe.freie-iframe");
   if (iframe) iframe.remove();
 
-  document.querySelectorAll("[data-prev-display]").forEach((el) => {
-    el.style.display = el.dataset.prevDisplay || "";
-  });
-
-  document.querySelectorAll("[data-prevPosition]").forEach((el) => {
-    el.style.position = el.dataset.prevPosition || "";
-  });
-
-  document.documentElement.style.overflow = "";
-  document.body.style.overflow = "";
+  restoreStashedInlineStyles();
 }
 
 function injectMenuFixCSS() {
@@ -2278,11 +2364,10 @@ if (detailBg) detailBg.remove();
 });
 
   barba.hooks.beforeLeave((data) => {
-    if (document.body.classList.contains("menu-open")) {
-      document.body.classList.remove("menu-open");
-      gsap.set(["html", "body"], { overflow: "" });
-      window.__closeMenuTl?.restart(true);
-    }
+    // Closes the menu AND resets its internal open/closed flag. Must run on every
+    // leave, not just when .menu-open is set: the flag can be true while the class
+    // is not yet applied (and vice versa) if a click landed mid-animation.
+    window.__forceCloseMenu?.();
 
     if (data.current?.namespace === "freie-arbeiten") {
       const iframe = document.querySelector("iframe.freie-iframe");
@@ -2296,6 +2381,10 @@ if (detailBg) detailBg.remove();
         setTimeout(() => {
           cleanupFreieArbeiten();
         }, 400);
+      } else {
+        // No iframe to fade (already torn down) -- the stashed chrome styles
+        // still have to be restored, or they leak into the next page.
+        cleanupFreieArbeiten();
       }
     }
   });
@@ -2303,6 +2392,11 @@ if (detailBg) detailBg.remove();
   barba.hooks.after((data) => {
     const oldPage = data?.old?.container;
     if (oldPage && oldPage.remove) oldPage.remove();
+
+    // Safety net for every arrival that is not the iframe page -- including
+    // browser back/forward, which Barba routes through here. Idempotent: a no-op
+    // unless initFreieArbeiten actually stashed something.
+    if (data?.next?.namespace !== "freie-arbeiten") cleanupFreieArbeiten();
 
     if (lenis && lenis.destroy) lenis.destroy();
 
